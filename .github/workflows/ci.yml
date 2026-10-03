@@ -44,6 +44,7 @@ jobs:
       - name: Package
         run: |
           mkdir dist
+          cp README.md catalog-publisher.lrplugin/
           zip -r "dist/catalog-publisher-${GITHUB_REF_NAME}.lrplugin.zip" catalog-publisher.lrplugin -x '*.DS_Store'
       - name: Create release
         env:
