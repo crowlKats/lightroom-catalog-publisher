@@ -1,0 +1,6 @@
+# Adobe's Lightroom Classic SDK is not redistributable; download it from
+# https://developer.adobe.com/lightroom-classic/ when needed.
+LrC_*_SDK/
+
+.DS_Store
+dist/
