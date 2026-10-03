@@ -256,12 +256,7 @@ CI syntax-checks every Lua file with Lua 5.1, the version Lightroom uses.
 
 ## Releasing
 
-Push a tag of the form `vX.Y.Z`:
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-CI writes the version into `Info.lua`, zips the plug-in, and creates a
-GitHub release with the zip attached.
+Create a release in GitHub's UI (**Releases → Draft a new release**) with a
+new tag of the form `vX.Y.Z` and publish it. CI then writes the version
+into `Info.lua`, zips the plug-in together with this README, and attaches
+the zip to the release.

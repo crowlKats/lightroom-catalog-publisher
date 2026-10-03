@@ -3,8 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -23,7 +24,7 @@ jobs:
           done
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'release'
     needs: check
     runs-on: ubuntu-latest
     permissions:
@@ -31,10 +32,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Stamp version from tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${TAG#v}"
           if ! [[ "$tag" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "tag must look like v1.2.3, got $GITHUB_REF_NAME" >&2
+            echo "tag must look like v1.2.3, got $TAG" >&2
             exit 1
           fi
           sed -i -E "s/VERSION = \{[^}]*\}/VERSION = { major = ${BASH_REMATCH[1]}, minor = ${BASH_REMATCH[2]}, revision = ${BASH_REMATCH[3]} }/" \
@@ -42,13 +45,14 @@ jobs:
           grep -q "major = ${BASH_REMATCH[1]}, minor = ${BASH_REMATCH[2]}, revision = ${BASH_REMATCH[3]}" \
             catalog-publisher.lrplugin/Info.lua
       - name: Package
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           mkdir dist
           cp README.md catalog-publisher.lrplugin/
-          zip -r "dist/catalog-publisher-${GITHUB_REF_NAME}.lrplugin.zip" catalog-publisher.lrplugin -x '*.DS_Store'
-      - name: Create release
+          zip -r "dist/catalog-publisher-${TAG}.lrplugin.zip" catalog-publisher.lrplugin -x '*.DS_Store'
+      - name: Attach zip to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip \
-            --title "$GITHUB_REF_NAME" --generate-notes
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/*.zip --clobber
