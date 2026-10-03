@@ -25,6 +25,79 @@ local function copyAppend(t, v)
 	return r
 end
 
+-- Add one entry per non-empty catalog collection, keyed by its names
+-- (rootNames followed by the collection-set path and collection name).
+local function addCollectionEntries(catalog, desired, excludes, rootNames)
+	local function walkContainer(container, parentNames, parentRel)
+		local okSets, sets = LrTasks.pcall(function() return container:getChildCollectionSets() end)
+		if okSets and sets then
+			for _, set in ipairs(sets) do
+				local name = CPUtil.sanitize(set:getName())
+				local rel = parentRel .. '/' .. name
+				if not CPUtil.isExcluded(rel, excludes) then
+					walkContainer(set, copyAppend(parentNames, name), rel)
+				end
+			end
+		end
+		local okColls, colls = LrTasks.pcall(function() return container:getChildCollections() end)
+		if okColls and colls then
+			for _, coll in ipairs(colls) do
+				local name = CPUtil.sanitize(coll:getName())
+				local rel = parentRel .. '/' .. name
+				if not CPUtil.isExcluded(rel, excludes) then
+					local okP, photos = LrTasks.pcall(function() return coll:getPhotos() end)
+					if okP and photos and #photos > 0 then
+						local names = copyAppend(parentNames, name)
+						desired[keyFor(names)] = {
+							names = names,
+							relPath = rel,
+							photos = photos,
+						}
+					end
+				end
+			end
+		end
+	end
+	walkContainer(catalog, rootNames, 'collections')
+end
+
+-- Filter out videos (canExportVideo = false) and photos stored outside the
+-- source roots, then drop entries that became empty.
+local function filterEntries(catalog, desired, includes)
+	local unique, uniqueList = {}, {}
+	for _, entry in pairs(desired) do
+		for _, p in ipairs(entry.photos) do
+			local id = p.localIdentifier
+			if id and not unique[id] then
+				unique[id] = true
+				uniqueList[#uniqueList + 1] = p
+			end
+		end
+	end
+	if #uniqueList > 0 then
+		local ok, meta = LrTasks.pcall(function()
+			return catalog:batchGetRawMetadata(uniqueList, { 'fileFormat', 'path' })
+		end)
+		if ok and meta then
+			for _, entry in pairs(desired) do
+				local filtered = {}
+				for _, p in ipairs(entry.photos) do
+					local m = meta[p]
+					if not (m and m.fileFormat == 'VIDEO')
+						and (#includes == 0 or (m and CPUtil.isIncluded(m.path, includes))) then
+						filtered[#filtered + 1] = p
+					end
+				end
+				entry.photos = filtered
+			end
+		end
+	end
+
+	for key, entry in pairs(desired) do
+		if #entry.photos == 0 then desired[key] = nil end
+	end
+end
+
 -- Build the desired mirror: { [key] = { names, relPath, photos } }
 -- names includes the top-level set title ('Folders'/'Collections').
 local function buildDesired(catalog, settings)
@@ -73,77 +146,28 @@ local function buildDesired(catalog, settings)
 		end
 	end
 
-	if settings.cp_mirrorCollections ~= false then
-		local function walkContainer(container, parentNames, parentRel)
-			local okSets, sets = LrTasks.pcall(function() return container:getChildCollectionSets() end)
-			if okSets and sets then
-				for _, set in ipairs(sets) do
-					local name = CPUtil.sanitize(set:getName())
-					local rel = parentRel .. '/' .. name
-					if not CPUtil.isExcluded(rel, excludes) then
-						walkContainer(set, copyAppend(parentNames, name), rel)
-					end
-				end
-			end
-			local okColls, colls = LrTasks.pcall(function() return container:getChildCollections() end)
-			if okColls and colls then
-				for _, coll in ipairs(colls) do
-					local name = CPUtil.sanitize(coll:getName())
-					local rel = parentRel .. '/' .. name
-					if not CPUtil.isExcluded(rel, excludes) then
-						local okP, photos = LrTasks.pcall(function() return coll:getPhotos() end)
-						if okP and photos and #photos > 0 then
-							local names = copyAppend(parentNames, name)
-							desired[keyFor(names)] = {
-								names = names,
-								relPath = rel,
-								photos = photos,
-							}
-						end
-					end
-				end
-			end
-		end
-		walkContainer(catalog, { COLLECTIONS_TITLE }, 'collections')
+	-- with Immich album sync, collections become albums instead of files
+	local immichAlbums = settings.cp_immichAlbums and settings.cp_mirrorFolders ~= false
+	if settings.cp_mirrorCollections ~= false and not immichAlbums then
+		addCollectionEntries(catalog, desired, excludes, { COLLECTIONS_TITLE })
 	end
 
-	-- filter out videos (canExportVideo = false) and, for collections,
-	-- photos stored outside the source roots
-	local unique, uniqueList = {}, {}
-	for _, entry in pairs(desired) do
-		for _, p in ipairs(entry.photos) do
-			local id = p.localIdentifier
-			if id and not unique[id] then
-				unique[id] = true
-				uniqueList[#uniqueList + 1] = p
-			end
-		end
-	end
-	if #uniqueList > 0 then
-		local ok, meta = LrTasks.pcall(function()
-			return catalog:batchGetRawMetadata(uniqueList, { 'fileFormat', 'path' })
-		end)
-		if ok and meta then
-			for _, entry in pairs(desired) do
-				local filtered = {}
-				for _, p in ipairs(entry.photos) do
-					local m = meta[p]
-					if not (m and m.fileFormat == 'VIDEO')
-						and (#includes == 0 or (m and CPUtil.isIncluded(m.path, includes))) then
-						filtered[#filtered + 1] = p
-					end
-				end
-				entry.photos = filtered
-			end
-		end
-	end
-
-	-- drop entries that became empty after video filtering
-	for key, entry in pairs(desired) do
-		if #entry.photos == 0 then desired[key] = nil end
-	end
-
+	filterEntries(catalog, desired, includes)
 	return desired
+end
+
+-- Desired Immich albums: the catalog's collections, filtered like the
+-- collections/ mirror. Returns a list of { names, photos }, where names is
+-- the collection path without the 'Collections' title.
+function CatalogSync.albumEntries(settings)
+	local catalog = LrApplication.activeCatalog()
+	local desired = {}
+	local excludes = CPUtil.combinedExcludes(settings.cp_excludes)
+	addCollectionEntries(catalog, desired, excludes, {})
+	filterEntries(catalog, desired, CPUtil.parseIncludes(settings.cp_includeRoots))
+	local list = {}
+	for _, entry in pairs(desired) do list[#list + 1] = entry end
+	return list
 end
 
 -- Walk the publish service's existing tree: returns (collsByKey, setsByKey)

@@ -10,6 +10,7 @@ local LrDate = import 'LrDate'
 
 require 'CPUtil'
 require 'CatalogSync'
+require 'Immich'
 
 AutoPublish = AutoPublish or {}
 
@@ -197,6 +198,13 @@ function AutoPublish.cycle(force)
 							summary[#summary + 1] = service:getName() .. ': changes detected, waiting for edits to settle'
 						end
 					end
+					-- after publishing, so new folders/ files are on disk
+					local okI, immich = LrTasks.pcall(function() return Immich.sync(service, settings, force) end)
+					if okI and immich then
+						summary[#summary + 1] = service:getName() .. ': ' .. immich
+					elseif not okI then
+						CPUtil.log('Immich sync error:', tostring(immich))
+					end
 				end
 			else
 				-- log the settings keys once so a settings-nesting problem is visible
@@ -241,8 +249,15 @@ function AutoPublish.syncAllNow()
 				lines[#lines + 1] = service:getName()
 					.. ': destination not available (not mounted?): ' .. rootDir
 			else
-				local s = CatalogSync.sync(service)
+				local settings = CPUtil.serviceSettings(service)
+				local s = CatalogSync.sync(service, settings)
 				lines[#lines + 1] = service:getName() .. ': ' .. s
+				local okI, immich = LrTasks.pcall(function() return Immich.sync(service, settings, true) end)
+				if okI and immich then
+					lines[#lines + 1] = service:getName() .. ': ' .. immich
+				elseif not okI then
+					lines[#lines + 1] = service:getName() .. ': Immich sync error: ' .. tostring(immich)
+				end
 			end
 		end
 	end)

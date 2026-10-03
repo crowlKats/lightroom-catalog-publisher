@@ -9,8 +9,10 @@ local LrView = import 'LrView'
 local LrTasks = import 'LrTasks'
 local LrApplication = import 'LrApplication'
 local LrDate = import 'LrDate'
+local LrBinding = import 'LrBinding'
 
 require 'CPUtil'
+require 'Immich'
 
 local bind = LrView.bind
 
@@ -33,6 +35,10 @@ provider.exportPresetFields = {
 	{ key = 'cp_soocCopy', default = false },
 	{ key = 'cp_excludes', default = '' },
 	{ key = 'cp_includeRoots', default = '' },
+	{ key = 'cp_immichAlbums', default = false },
+	{ key = 'cp_immichUrl', default = '' },
+	{ key = 'cp_immichApiKey', default = '' },
+	{ key = 'cp_immichRoot', default = '' },
 }
 
 -- The mirror is managed by the plug-in; don't let renames drift from the catalog.
@@ -112,7 +118,11 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
 					width = LrView.share 'cp_label_width',
 				},
 				f:checkbox { title = 'Folders', value = bind 'cp_mirrorFolders' },
-				f:checkbox { title = 'Collections', value = bind 'cp_mirrorCollections' },
+				f:checkbox {
+					title = 'Collections',
+					value = bind 'cp_mirrorCollections',
+					enabled = LrBinding.negativeOfKey('cp_immichAlbums'),
+				},
 			},
 
 			f:row {
@@ -248,6 +258,110 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
 					font = '<system/small>',
 					fill_horizontal = 1,
 					height_in_lines = 2,
+				},
+			},
+		},
+		{
+			title = 'Immich Albums',
+			synopsis = bind 'cp_immichUrl',
+
+			f:row {
+				spacing = f:label_spacing(),
+				f:static_text {
+					title = '',
+					width = LrView.share 'cp_immich_label_width',
+				},
+				f:checkbox {
+					title = 'Sync collections to Immich albums (instead of writing collections/)',
+					value = bind 'cp_immichAlbums',
+					enabled = bind 'cp_mirrorFolders',
+				},
+			},
+
+			f:row {
+				spacing = f:label_spacing(),
+				f:static_text {
+					title = 'Server URL:',
+					alignment = 'right',
+					width = LrView.share 'cp_immich_label_width',
+				},
+				f:edit_field {
+					value = bind 'cp_immichUrl',
+					enabled = bind 'cp_immichAlbums',
+					fill_horizontal = 1,
+					width_in_chars = 30,
+					immediate = true,
+				},
+			},
+
+			f:row {
+				spacing = f:label_spacing(),
+				f:static_text {
+					title = 'API key:',
+					alignment = 'right',
+					width = LrView.share 'cp_immich_label_width',
+				},
+				f:password_field {
+					value = bind 'cp_immichApiKey',
+					enabled = bind 'cp_immichAlbums',
+					fill_horizontal = 1,
+					width_in_chars = 30,
+					immediate = true,
+				},
+			},
+
+			f:row {
+				spacing = f:label_spacing(),
+				f:static_text {
+					title = 'Destination in Immich:',
+					alignment = 'right',
+					width = LrView.share 'cp_immich_label_width',
+				},
+				f:edit_field {
+					value = bind 'cp_immichRoot',
+					enabled = bind 'cp_immichAlbums',
+					fill_horizontal = 1,
+					width_in_chars = 30,
+					immediate = true,
+				},
+			},
+
+			f:row {
+				spacing = f:label_spacing(),
+				f:static_text {
+					title = '',
+					width = LrView.share 'cp_immich_label_width',
+				},
+				f:static_text {
+					title = 'The destination folder\'s path as Immich sees it (e.g. inside its container).\nLeave empty if it is the same path. Immich must import <that path>/folders/ as an external library.',
+					font = '<system/small>',
+					fill_horizontal = 1,
+					height_in_lines = 2,
+				},
+			},
+
+			f:row {
+				spacing = f:label_spacing(),
+				f:static_text {
+					title = '',
+					width = LrView.share 'cp_immich_label_width',
+				},
+				f:push_button {
+					title = 'Test Connection',
+					enabled = bind 'cp_immichAlbums',
+					action = function()
+						LrTasks.startAsyncTask(function()
+							local settings = {
+								cp_immichAlbums = propertyTable.cp_immichAlbums,
+								cp_immichUrl = propertyTable.cp_immichUrl,
+								cp_immichApiKey = propertyTable.cp_immichApiKey,
+								cp_immichRoot = propertyTable.cp_immichRoot,
+								cp_rootDir = propertyTable.cp_rootDir,
+							}
+							local ok, msg = Immich.testConnection(settings)
+							LrDialogs.message('Immich connection', msg, ok and 'info' or 'warning')
+						end)
+					end,
 				},
 			},
 		},
