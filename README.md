@@ -20,6 +20,8 @@ Highlights:
   collections by pattern
 - Optional symlinks so `collections/` doesn't duplicate `folders/` (macOS)
 - Optional camera-JPEG passthrough for unedited RAW+JPEG photos
+- Optional Immich album sync: collections become Immich albums of the
+  published photos, with no duplicate files
 - Copes with an unmounted NAS: it pauses and resumes on its own
 - Extras: stack bursts already in the catalog, and a card import that
   stacks bursts at import time (Sony maker notes via ExifTool)
@@ -82,6 +84,53 @@ Leave it empty to publish the whole catalog. Matching is case-insensitive.
 
 Setting or narrowing it removes everything that falls outside from the
 destination on the next sync.
+
+## Immich albums (optional)
+
+With [Immich](https://immich.app), folders are storage and collections are
+albums. Enable **Sync collections to Immich albums** in the service
+settings' *Immich Albums* section and the plug-in turns every Lightroom
+collection into an Immich album instead of writing `collections/` files:
+
+1. In Immich, add an external library whose import path is the
+   destination's `folders/` directory as Immich sees it, e.g.
+   `/mnt/processed/folders`. Owner: the user the API key belongs to.
+2. Create an API key in Immich (**Account Settings → API Keys**) with at
+   least `album.read`, `album.create`, `album.delete`, `albumAsset.create`,
+   `albumAsset.delete` and `asset.read`.
+3. In the service settings, enter the server URL, the API key, and the
+   **Destination in Immich**: the destination folder's path inside the
+   Immich container (leave empty when it's the same path). **Test
+   Connection** checks all three.
+
+Each album holds the photos' `folders/` copies, so a photo exists once in
+Immich no matter how many collections it's in. Album names follow the
+collection hierarchy, e.g. `Trips / Japan`, since Immich has no nested
+albums. Re-publishing an edit overwrites the file at the same path, so
+Immich keeps the asset with its faces, favorites and comments.
+
+The sync runs after each publish cycle and only talks to Immich when
+collection membership changed; **Sync Structure Now** forces a full
+check (e.g. to recreate an album you deleted in Immich). Photos Immich
+hasn't imported yet are retried every two minutes. With an admin API key
+the plug-in also asks Immich to rescan the library; otherwise they show up
+after Immich's own scheduled scan.
+
+What the plug-in touches:
+
+- Albums it creates are marked with the description *Synced from
+  Lightroom by Catalog Publisher*. When their collection goes away they
+  are deleted, unless you added photos from outside the mirror; then only
+  the mirror's photos are removed.
+- An existing album with the same name as a collection is reused, and
+  never deleted.
+- Photos from outside the mirror (e.g. phone uploads) are never removed
+  from any album, so you can mix them into synced albums.
+
+Turning this on removes the `collections/` tree from the destination on the
+next sync. It needs the Folders mirror; the Exclude and *Only photos
+under* settings apply to albums too. The API key is stored in the
+publish service settings in the catalog, like the other settings.
 
 ## Excluding collections and folders
 
