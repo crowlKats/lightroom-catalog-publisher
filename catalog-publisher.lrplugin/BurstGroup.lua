@@ -168,7 +168,7 @@ local function writeFile(path, text)
 	fh:close()
 end
 
--- Run ExifTool once over all paths. Returns { [path] = { rm, seq, subsec, dto } }.
+-- Run ExifTool once over all paths. Returns { [path] = { rm, seq, subsec, dto, flash } }.
 local function readBurstInfo(exiftoolPath, paths, scope)
 	local tmp = LrPathUtils.getStandardFilePath('temp')
 	local stamp = tostring(math.floor(LrDate.currentTime())) .. '-' .. tostring(math.random(1000000))
@@ -182,7 +182,7 @@ local function readBurstInfo(exiftoolPath, paths, scope)
 	local args = {
 		'-f', '-n', '-m', '-q', '-q', '-fast',
 		-- real tab characters: ExifTool does not unescape '\t' in -p formats
-		'-p', '$directory/$filename\t$Sony:ReleaseMode\t$Sony:SequenceImageNumber\t$SubSecTimeOriginal\t$DateTimeOriginal',
+		'-p', '$directory/$filename\t$Sony:ReleaseMode\t$Sony:SequenceImageNumber\t$SubSecTimeOriginal\t$DateTimeOriginal\t$Flash',
 	}
 	for _, p in ipairs(paths) do args[#args + 1] = p end
 	writeFile(argsPath, table.concat(args, '\n') .. '\n')
@@ -223,6 +223,7 @@ local function readBurstInfo(exiftoolPath, paths, scope)
 				seq = num(cols[3]),
 				subsec = subsec,
 				dto = cols[5] ~= '-' and cols[5] or nil,
+				flash = num(cols[6]), -- EXIF Flash; bit 0 = fired
 			}
 		end
 	end

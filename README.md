@@ -232,7 +232,10 @@ What it does, all configurable in its dialog and remembered between runs:
   Choose…, plus a **folder pattern** built from the capture date
   (strftime, default `%Y/%Y-%m-%d`). Both are remembered between runs.
 - **Develop preset** and **metadata preset** applied on add, picked from
-  your preset folders (Lightroom 12.5+).
+  your preset folders (Lightroom 12.5+). **With flash** picks a different
+  develop preset for photos whose EXIF Flash tag says the flash fired
+  (read with ExifTool); leave it at *Same as without flash* to use one
+  preset for everything.
 - **Bursts**: raws are grouped exactly as in Stack Bursts (same ExifTool
   path and time-gap settings) and frames 2..n are added stacked under
   frame 1 in capture order. Optionally collapse the new stacks afterwards

@@ -1,6 +1,7 @@
 -- Plug-in driven import: copies files from a memory card (or any folder)
 -- into a date folder under the destination, adds them to the catalog with a
--- develop and/or metadata preset, and stacks burst frames at add time via
+-- develop preset (optionally a different one for flash shots) and/or a
+-- metadata preset, and stacks burst frames at add time via
 -- catalog:addPhoto(path, stackWithPhoto). This replaces Lightroom's Import
 -- dialog for the "copy + preset + stack" case; the SDK offers no hook into
 -- the real import, and no way to stack existing photos.
@@ -29,6 +30,7 @@ local VIDEO_EXTS = { mp4 = true, mov = true }
 local SIDECAR_EXTS = { xmp = true }
 
 local NONE = '__none__'
+local SAME = '__same__' -- flash preset: use the regular develop preset
 
 local function extOf(path)
 	return string.lower(LrPathUtils.extension(path) or '')
@@ -65,6 +67,7 @@ function CardImport.settings()
 		destRoot = prefs.ci_destRoot,
 		folderFormat = prefs.ci_folderFormat,
 		developPreset = prefs.ci_developPreset,
+		flashPreset = prefs.ci_flashPreset,
 		metadataPreset = prefs.ci_metadataPreset,
 		stack = prefs.ci_stack,
 		collapse = prefs.ci_collapse,
@@ -75,6 +78,7 @@ function CardImport.settings()
 	if type(s.destRoot) ~= 'string' then s.destRoot = '' end
 	if type(s.folderFormat) ~= 'string' or s.folderFormat == '' then s.folderFormat = '%Y/%Y-%m-%d' end
 	if type(s.developPreset) ~= 'string' or s.developPreset == '' then s.developPreset = NONE end
+	if type(s.flashPreset) ~= 'string' or s.flashPreset == '' then s.flashPreset = SAME end
 	if type(s.metadataPreset) ~= 'string' or s.metadataPreset == '' then s.metadataPreset = NONE end
 	if s.stack == nil then s.stack = true end
 	if s.collapse == nil then s.collapse = false end
@@ -89,6 +93,7 @@ local function saveSettings(s)
 	prefs.ci_destRoot = s.destRoot
 	prefs.ci_folderFormat = s.folderFormat
 	prefs.ci_developPreset = s.developPreset
+	prefs.ci_flashPreset = s.flashPreset
 	prefs.ci_metadataPreset = s.metadataPreset
 	prefs.ci_stack = s.stack
 	prefs.ci_collapse = s.collapse
@@ -96,37 +101,47 @@ local function saveSettings(s)
 	prefs.ci_skipExisting = s.skipExisting
 end
 
+-- Develop presets are remembered by "folder / name": preset:getUuid()
+-- returns a different ID in every Lightroom session, so a saved UUID never
+-- matches again. Returns the popup items and the current UUID per item.
 local function developPresetItems()
 	local items = { { title = 'None', value = NONE } }
+	local uuids = {}
 	LrTasks.pcall(function()
 		for _, folder in ipairs(LrApplication.developPresetFolders() or {}) do
 			local fname = folder:getName()
 			for _, preset in ipairs(folder:getDevelopPresets() or {}) do
-				items[#items + 1] = { title = fname .. ' / ' .. preset:getName(), value = preset:getUuid() }
+				local key = fname .. ' / ' .. preset:getName()
+				if not uuids[key] then
+					items[#items + 1] = { title = key, value = key }
+					uuids[key] = preset:getUuid()
+				end
 			end
 		end
 	end)
-	return items
+	return items, uuids
 end
 
+-- Remembered by name too, like develop presets.
 local function metadataPresetItems()
 	local items = { { title = 'None', value = NONE } }
-	local list = {}
+	local list, uuids = {}, {}
 	LrTasks.pcall(function()
 		for name, uuid in pairs(LrApplication.metadataPresets() or {}) do
-			list[#list + 1] = { title = tostring(name), value = tostring(uuid) }
+			list[#list + 1] = { title = tostring(name), value = tostring(name) }
+			uuids[tostring(name)] = tostring(uuid)
 		end
 	end)
 	table.sort(list, function(a, b) return a.title < b.title end)
 	for _, it in ipairs(list) do items[#items + 1] = it end
-	return items
+	return items, uuids
 end
 
-local function ensureValue(items, value)
+local function ensureValue(items, value, fallback)
 	for _, it in ipairs(items) do
 		if it.value == value then return value end
 	end
-	return NONE
+	return fallback or NONE
 end
 
 -- Root folders of the catalog (what the Folders panel shows at top level),
@@ -169,14 +184,17 @@ function CardImport.showDialog(context)
 			value = r.path,
 		}
 	end
-	local devItems = developPresetItems()
-	local metaItems = metadataPresetItems()
+	local devItems, devUuids = developPresetItems()
+	local flashItems = { { title = 'Same as without flash', value = SAME } }
+	for _, it in ipairs(devItems) do flashItems[#flashItems + 1] = it end
+	local metaItems, metaUuids = metadataPresetItems()
 
 	local props = LrBinding.makePropertyTable(context)
 	props.source = s.source
 	props.destRoot = s.destRoot
 	props.folderFormat = s.folderFormat
 	props.developPreset = ensureValue(devItems, s.developPreset)
+	props.flashPreset = ensureValue(flashItems, s.flashPreset, SAME)
 	props.metadataPreset = ensureValue(metaItems, s.metadataPreset)
 	props.stack = s.stack
 	props.collapse = s.collapse
@@ -249,6 +267,18 @@ function CardImport.showDialog(context)
 		},
 		f:row {
 			spacing = f:label_spacing(),
+			f:static_text { title = 'With flash:', alignment = 'right', width = labelWidth },
+			f:popup_menu { value = bind 'flashPreset', items = flashItems, width_in_chars = 40 },
+		},
+		f:row {
+			f:static_text { title = '', width = labelWidth },
+			f:static_text {
+				title = 'Used for photos whose EXIF says the flash fired (read with ExifTool)',
+				font = '<system/small>',
+			},
+		},
+		f:row {
+			spacing = f:label_spacing(),
 			f:static_text { title = 'Metadata preset:', alignment = 'right', width = labelWidth },
 			f:popup_menu { value = bind 'metadataPreset', items = metaItems, width_in_chars = 40 },
 		},
@@ -295,6 +325,11 @@ function CardImport.showDialog(context)
 	s.destRoot = tostring(props.destRoot or '')
 	s.folderFormat = tostring(props.folderFormat or '%Y/%Y-%m-%d')
 	s.developPreset = props.developPreset or NONE
+	s.flashPreset = props.flashPreset or SAME
+	-- this session's UUIDs, for addPhoto (not saved, see developPresetItems)
+	s.developUuid = devUuids[s.developPreset]
+	s.flashUuid = devUuids[s.flashPreset]
+	s.metadataUuid = metaUuids[s.metadataPreset]
 	s.metadataPreset = props.metadataPreset or NONE
 	s.stack = props.stack and true or false
 	s.collapse = props.collapse and true or false
@@ -343,10 +378,11 @@ function CardImport.run(context, s)
 			'No folder at ' .. tostring(s.destRoot) .. ' (NAS not mounted?)', 'critical')
 		return
 	end
-	if s.stack and not LrFileUtils.exists(bs.exiftoolPath) then
+	local useFlash = s.flashPreset ~= SAME and s.flashPreset ~= s.developPreset
+	if (s.stack or useFlash) and not LrFileUtils.exists(bs.exiftoolPath) then
 		LrDialogs.message('Catalog Publisher: ExifTool not found',
-			'Burst stacking needs ExifTool; no file at ' .. bs.exiftoolPath
-				.. '. Set the path in Stack Bursts… or turn off stacking.', 'critical')
+			'Burst stacking and the flash preset need ExifTool; no file at ' .. bs.exiftoolPath
+				.. '. Set the path in Stack Bursts…, or turn off stacking and set the flash preset to "Same as without flash".', 'critical')
 		return
 	end
 
@@ -401,6 +437,7 @@ function CardImport.run(context, s)
 		r.t = t
 		r.rm = d and d.rm or nil
 		r.seq = d and d.seq or nil
+		r.flash = d and d.flash ~= nil and d.flash % 2 == 1 -- bit 0: flash fired
 	end
 	for _, r in ipairs(files) do
 		local anchor = r.kind ~= 'raw' and rawSiblingOf(r) or nil
@@ -472,8 +509,11 @@ function CardImport.run(context, s)
 	end)
 
 	-- 7. add to catalog in batches (keeps the UI responsive)
-	local devUuid = s.developPreset ~= NONE and s.developPreset or nil
-	local metaUuid = s.metadataPreset ~= NONE and s.metadataPreset or nil
+	local devUuid = s.developUuid
+	local flashUuid = devUuid
+	if useFlash then flashUuid = s.flashUuid end
+	local flashCount = 0
+	local metaUuid = s.metadataUuid
 	local added, already, addFailed, stacksMade = 0, 0, {}, 0
 	local destFolders = {}
 	local BATCH = 20
@@ -492,15 +532,18 @@ function CardImport.run(context, s)
 					if existing then
 						already = already + 1
 					else
+						local preset = devUuid
+						if r.flash then preset = flashUuid end
 						local ok, res = LrTasks.pcall(function()
 							if j > 1 and anchor then
-								return catalog:addPhoto(r.dest, anchor, 'below', metaUuid, devUuid)
+								return catalog:addPhoto(r.dest, anchor, 'below', metaUuid, preset)
 							end
-							return catalog:addPhoto(r.dest, nil, nil, metaUuid, devUuid)
+							return catalog:addPhoto(r.dest, nil, nil, metaUuid, preset)
 						end)
 						if ok then
 							photo = res
 							added = added + 1
+							if r.flash then flashCount = flashCount + 1 end
 						else
 							addFailed[#addFailed + 1] = LrPathUtils.leafName(r.dest) .. ': ' .. tostring(res)
 						end
@@ -538,6 +581,7 @@ function CardImport.run(context, s)
 		'Catalog Publisher: %d file(s) copied, %d already present; %d photo(s) added (%d already in catalog); %d burst stack(s)',
 		copied, skipped, added, already, stacksMade)
 	CPUtil.log(summary)
+	if useFlash then CPUtil.log(string.format('import: %d photo(s) with flash got the flash preset', flashCount)) end
 	local problems = {}
 	for _, x in ipairs(failed) do problems[#problems + 1] = x end
 	for _, x in ipairs(addFailed) do problems[#problems + 1] = x end
